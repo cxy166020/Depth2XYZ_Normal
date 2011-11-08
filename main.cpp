@@ -8,6 +8,9 @@
 #define COLOR_CHANNEL 3
 #define RGB_FULL 255
 
+// Recursion depth
+static const int limit = 3;
+
 struct point
 {
   float WorldX;
@@ -154,6 +157,11 @@ int main(int argc, char** argv)
 	    {
 	      continue;
 	    }
+	  else
+	    {
+	      GetNormal(j, i, j+1, i+1, PointCloud, depth, 
+			ImWidth, ImHeight, limit, default_normal[3]);
+	    }
 
 	  pt_counter++;
 	}
@@ -165,8 +173,8 @@ int main(int argc, char** argv)
     {
       for(int j=0; j<ImWidth; j++)
 	{
-	  if( (depth > (MinDepth+EPS)) && 
-	      (depth < (MaxDepth-EPS)) )
+	  if( (depth[] > (MinDepth+EPS)) && 
+	      (depth[] < (MaxDepth-EPS)) )
 	    {
 	    }
 	}
@@ -180,18 +188,31 @@ int main(int argc, char** argv)
 
 // limit constraints how deep the recursion goes
 void GetNormal(int x_o, int y_o, int x_e, int y_e, point* PointCloud,
-	       float* depth, int ImWidth, int ImHeight, int limit)
+	       float* depth, int ImWidth, int ImHeight, int limit,
+	       float default_normal[3])
 {
   int pos_o = y_o*ImWidth + x_o;
   int pos_e = y_e*ImWidth + x_e;
 
-  if( x<0 || x>=ImWidth  ||
-      y<0 || y>=ImHeight || limit<=0 )
+  if( x_e>=ImWidth || y_e>=ImHeight || limit<=0 )
     {
+      PointCloud[pos_o].Norm_X = default_norm[0];
+      PointCloud[pos_o].Norm_Y = default_norm[1];
+      PointCloud[pos_o].Norm_Z = default_norm[2];
     }
-      else if()
-	{
-	}
+  else if( (depth[pos_e] > (MinDepth+EPS)) && 
+	   (depth[pos_e] < (MaxDepth-EPS)) )
+    {
+      cross_product(PointCloud[pos_o], 
+		    PointCloud[pos_e], 
+		    PointCloud[pos_o]);
+    }
+  else
+    {
+      GetNormal(x_o, y_o, x_e+1, y_e+1, PointCloud,
+		depth, ImWidth, ImHeight, limit-1,
+		default_normal);
+    }
 }
 
 void ReadConfig(float K[3][3], float R[3][3], float T[3], 
