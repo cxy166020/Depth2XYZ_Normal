@@ -4,12 +4,17 @@
 #include <cstdio>
 #include <cstring> 
 #include <limits>
+#include <cstdlib>
 
 #define COLOR_CHANNEL 3
 #define RGB_FULL 255
 
-// Recursion depth
+// Maximum step when for normal calculation
 static const int limit = 3;
+// x, y, z, normal_x, normal_y, normal_z block size
+static const int block = 6;
+
+static const float EPS = 0.001;
 
 struct point
 {
@@ -28,6 +33,10 @@ public:
   }
 };
 
+void GetNormal(int x, int y, point* PointCloud, float* depth, 
+	       int ImWidth, int ImHeight, int limit,
+	       float default_normal[3], float MinDepth, float MaxDepth);
+
 void ReadConfig(float K[3][3], float R[3][3], float T[3], 
 		std::string RefImName, std::string ConfigName);
 
@@ -42,7 +51,7 @@ void MatMul3_3x3_1(float a[3][3], float b[3], float c[3]);
 
 void translate(point& a_point, float a[3][3], float b[3], int ImgX, int ImgY, float depth);
 
-void cross_product(const point a, const point b, point& c);
+void cross_product(float a[3], float b[3], float c[3]);
 
 
 int main(int argc, char** argv)
@@ -60,9 +69,9 @@ int main(int argc, char** argv)
   float MinDepth = atof(argv[ArgCount++]);
   float MaxDepth = atof(argv[ArgCount++]);
 
-  const float EPS = std::numeric_limits<float>::epsilon();
-
   std::string OutputName = argv[ArgCount++];
+
+  // const float EPS = std::numeric_limits<float>::epsilon();
 
   // Read camera matrices
   float K[3][3], R[3][3], T[3];
@@ -85,22 +94,7 @@ int main(int argc, char** argv)
   ifm.read((char*)depth, ImWidth*ImHeight*sizeof(float));
 
   ifm.close();
-
-
-  // // ------------------------------------------------------- //
-  // // Sanity Test
-  // std::ofstream ofm;
-
-  // std::cout << DepthMapName  << std::endl;
   
-  // ofm.open("sanity.depth", std::ios::trunc | std::ios::binary);
-
-  // ofm.write((char*)depth, ImWidth*ImHeight*sizeof(float));
-
-  // ofm.close();
-  // // ------------------------------------------------------- //
-  
-
   // Calculate inverse matrix of K and R
   float InvR[3][3], InvK[3][3];
   inv_3x3(R, InvR);
@@ -122,9 +116,9 @@ int main(int argc, char** argv)
   // is the third row of M, so default normal of
   // point cloud will be set to -det(M)*M3
   float default_normal[3];
-  float DetM = det3x3(M[0], M[1], M[2], 
-		      M[3], M[4], M[5],
-		      M[6], M[7], M[8]);
+  float DetM = det3x3(M[0][0], M[0][1], M[0][2], 
+		      M[1][0], M[1][1], M[1][2],
+		      M[2][0], M[2][1], M[2][2]);
 
   default_normal[0] = -DetM*M[2][0];
   default_normal[1] = -DetM*M[2][1];
@@ -133,10 +127,8 @@ int main(int argc, char** argv)
   // Allocate memory for point cloud
   point* PointCloud = new point[ImWidth*ImHeight];
   
-  int depth_counter = 0;
-  int pt_counter = 0;
-
   // Translate coordinates of all points from 2D to 3D world
+  int pt_counter = 0;
   for(int i=0; i<ImHeight; i++)
     {
       for(int j=0; j<ImWidth; j++)
@@ -148,6 +140,33 @@ int main(int argc, char** argv)
     }
 
   // Calculate normal for all points
+  pt_counter = 0;
+  for(int i=0; i<ImHeight; i++)
+    {
+      for(int j=0; j<ImWidth; j++)
+	{	  
+	  if( (depth[pt_counter] > (MinDepth+EPS)) && 
+	      (depth[pt_counter] < (MaxDepth-EPS)) )
+	    {
+	      GetNormal(j, i, PointCloud, depth, ImWidth, ImHeight, 
+			limit, default_normal, MinDepth, MaxDepth);
+
+	      pt_counter++;
+	    }
+	  else
+	    {
+	      pt_counter++;
+	      continue;
+	    }
+	}
+    }
+
+  // Get rid of points with invalid depth, namely, points whose depth
+  // is either MinDepth or MaxDepth
+  float* xyz_norm = new float[ImWidth*ImHeight*block];
+
+  pt_counter = 0;
+  int counter = 0;
   for(int i=0; i<ImHeight; i++)
     {
       for(int j=0; j<ImWidth; j++)
@@ -155,31 +174,30 @@ int main(int argc, char** argv)
 	  if( (depth[pt_counter] > (MinDepth+EPS)) && 
 	      (depth[pt_counter] < (MaxDepth-EPS)) )
 	    {
-	      continue;
-	    }
-	  else
-	    {
-	      GetNormal(j, i, j+1, i+1, PointCloud, depth, 
-			ImWidth, ImHeight, limit, default_normal[3]);
+	      xyz_norm[counter] = PointCloud[pt_counter].WorldX;
+	      counter++;
+	      xyz_norm[counter] = PointCloud[pt_counter].WorldY;
+	      counter++;
+	      xyz_norm[counter] = PointCloud[pt_counter].WorldZ;
+	      counter++;
+	      xyz_norm[counter] = PointCloud[pt_counter].Norm_X;
+	      counter++;
+	      xyz_norm[counter] = PointCloud[pt_counter].Norm_Y;
+	      counter++;
+	      xyz_norm[counter] = PointCloud[pt_counter].Norm_Z;
+	      counter++;
 	    }
 
 	  pt_counter++;
 	}
     }
 
-  // Get rid of points with invalid depth, namely, points whose depth
-  // is either MinDepth or MaxDepth
-  for(int i=0; i<ImHeight; i++)
-    {
-      for(int j=0; j<ImWidth; j++)
-	{
-	  if( (depth[] > (MinDepth+EPS)) && 
-	      (depth[] < (MaxDepth-EPS)) )
-	    {
-	    }
-	}
-    }
+  std::ofstream ofm;
+  ofm.open(OutputName.c_str(), std::ios::trunc | std::ios::binary);
+  ofm.write((char*)xyz_norm, ImWidth*ImHeight*block*sizeof(float));
+  ofm.close();
 
+  delete[] xyz_norm;
   delete[] depth;
   delete[] PointCloud;
 
@@ -187,31 +205,75 @@ int main(int argc, char** argv)
 }
 
 // limit constraints how deep the recursion goes
-void GetNormal(int x_o, int y_o, int x_e, int y_e, point* PointCloud,
-	       float* depth, int ImWidth, int ImHeight, int limit,
-	       float default_normal[3])
+void GetNormal(int x, int y, point* PointCloud, float* depth, 
+	       int ImWidth, int ImHeight, int limit,
+	       float default_normal[3], float MinDepth, float MaxDepth)
 {
-  int pos_o = y_o*ImWidth + x_o;
-  int pos_e = y_e*ImWidth + x_e;
+  // const float EPS = std::numeric_limits<float>::epsilon();
+  const int pos_o = y*ImWidth + x;
+  float a[3], b[3], c[3];
+  a[0] = a[1] = a[2] = 0;
+  b[0] = b[1] = b[2] = 0;
+  c[0] = c[1] = c[2] = 0;
 
-  if( x_e>=ImWidth || y_e>=ImHeight || limit<=0 )
+  bool LimitReached = false;
+  
+  int pos;
+  for(int i=1; i<=limit; i++)
     {
-      PointCloud[pos_o].Norm_X = default_norm[0];
-      PointCloud[pos_o].Norm_Y = default_norm[1];
-      PointCloud[pos_o].Norm_Z = default_norm[2];
+      if(y+i<ImHeight)
+	{
+	  pos = (y+i)*ImWidth + x;
+	  
+	  if( (depth[pos] > (MinDepth+EPS)) && 
+	      (depth[pos] < (MaxDepth-EPS)) )
+	    {
+	      b[0] = PointCloud[pos].WorldX - PointCloud[pos_o].WorldX;
+	      b[1] = PointCloud[pos].WorldY - PointCloud[pos_o].WorldY;
+	      b[2] = PointCloud[pos].WorldZ - PointCloud[pos_o].WorldZ;
+
+	      break;
+	    }
+
+	  if(i == limit)
+	    LimitReached = true;
+	}
     }
-  else if( (depth[pos_e] > (MinDepth+EPS)) && 
-	   (depth[pos_e] < (MaxDepth-EPS)) )
+
+  for(int i=1; i<=limit; i++)
     {
-      cross_product(PointCloud[pos_o], 
-		    PointCloud[pos_e], 
-		    PointCloud[pos_o]);
+      if(x+i<ImWidth)
+	{
+	  pos = y*ImWidth + x+i;
+	  
+	  if( (depth[pos] > (MinDepth+EPS)) && 
+	      (depth[pos] < (MaxDepth-EPS)) )
+	    {
+	      a[0] = PointCloud[pos].WorldX - PointCloud[pos_o].WorldX;
+	      a[1] = PointCloud[pos].WorldY - PointCloud[pos_o].WorldY;
+	      a[2] = PointCloud[pos].WorldZ - PointCloud[pos_o].WorldZ;
+
+	      break;
+	    }
+
+	  if(i == limit)
+	    LimitReached = true;
+	}
+    }
+
+  if( LimitReached )
+    {
+      PointCloud[pos_o].Norm_X = default_normal[0];
+      PointCloud[pos_o].Norm_Y = default_normal[1];
+      PointCloud[pos_o].Norm_Z = default_normal[2];
     }
   else
     {
-      GetNormal(x_o, y_o, x_e+1, y_e+1, PointCloud,
-		depth, ImWidth, ImHeight, limit-1,
-		default_normal);
+      cross_product(a, b, c);
+
+      PointCloud[pos_o].Norm_X = c[0];
+      PointCloud[pos_o].Norm_Y = c[1];
+      PointCloud[pos_o].Norm_Z = c[2];
     }
 }
 
@@ -357,9 +419,9 @@ inline void translate(point& a_point, float a[3][3], float b[3], int ImgX, int I
 }
 
 
-inline void cross_product(const point a, const point b, point& c)
+inline void cross_product(float a[3], float b[3], float c[3])
 {
-  c.Norm_X = a.WorldY*b.WorldZ - a.WorldZ*b.WorldY;
-  c.Norm_Y = a.WorldZ*b.WorldX - a.WorldX*b.WorldZ;
-  c.Norm_Z = a.WorldX*b.WorldY - a.WorldY*b.WorldX;
+  c[0] = a[1]*b[2] - a[2]*b[1];
+  c[1] = a[2]*b[0] - a[0]*b[2];
+  c[2] = a[0]*b[1] - a[1]*b[0];
 }
